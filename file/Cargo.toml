@@ -1,0 +1,13 @@
+[package]
+name = "file"
+version = "0.1.0"
+authors = ["vmos <vmos@fairblock.io>"]
+edition = "2018"
+
+[dependencies]
+lazy_static = "1.4"
+num_cpus = "1.13"
+fnv = "1.0"
+async = { path = "../../pi_lib/async" }
+async_file = { path = "../async_file" }
+hash = {path="../../pi_lib/hash", features = ["xxhash"]}
