@@ -6,12 +6,13 @@ extern crate num_cpus;
 extern crate lazy_static;
 
 use std::{env, path::{Path, PathBuf}, sync::Arc, sync::Weak};
+use std::ops::Deref;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::io::{ Result};
 use std::collections::hash_map::{Entry};
 use async_file::{AsyncFileOptions, WriteOptions, AsyncFile};
 use r#async::rt::multi_thread::{MultiTaskPool, MultiTaskRuntime};
-use r#async::lock::{rw_lock::RwLock, mutex_lock::Mutex};
+use r#async::lock::{rw_lock::RwLock, mutex_lock::Mutex, spin_lock::SpinLock};
 use hash::{XHashMap, DefaultHasher};
 
 
@@ -39,10 +40,21 @@ struct Table(Mutex<XHashMap<PathBuf, Weak<InnerSafeFile>>>);
 
 pub struct SafeFile(Arc<InnerSafeFile>);
 
+impl Deref for SafeFile {
+	type Target = AsyncFile<()>;
+    #[inline(always)]
+	fn deref(&self) -> &AsyncFile<()> {
+		&(*self.0).file
+	}
+}
+enum LockType {
+    Rw(RwLock<()>),
+    Lock(Mutex<()>),
+}
 struct InnerSafeFile {
     file: AsyncFile<()>,
-    lock: RwLock<()>,
-    buff: Arc<[u8]>,
+    lock: LockType,
+    buff: SpinLock<(Arc<[u8]>, usize)>,
 }
 impl Debug for InnerSafeFile {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
@@ -50,12 +62,12 @@ impl Debug for InnerSafeFile {
     }
 }
 impl InnerSafeFile {
-    fn new(file: AsyncFile<()>) -> Self {
+    fn new(file: AsyncFile<()>, lock: LockType) -> Self {
         let vec = Vec::new();
         InnerSafeFile{
             file,
-            lock: RwLock::new(()),
-            buff: Arc::from(&vec[..]),
+            lock,
+            buff: SpinLock::new((Arc::from(&vec[..]), 0)),
         }
     }
 }
@@ -86,9 +98,13 @@ impl SafeFile {
                 _ => ()
             }
         }
+        let lock = match options {
+            AsyncFileOptions::TruncateWrite => LockType::Lock(Mutex::new(())),
+            _ => LockType::Rw(RwLock::new(()))
+        };
         let file = match AsyncFile::open(
             FILE_RUNTIME.clone(), path.clone(), options).await {
-            Ok(file) => Arc::new(InnerSafeFile::new(file)),
+            Ok(file) => Arc::new(InnerSafeFile::new(file, lock)),
             Err(r) => return Err(r)
         };
         let mut tab = OPEN_FILE_MAP.0.lock().await;
@@ -100,7 +116,7 @@ impl SafeFile {
                     },
                     _ => {
                         e.insert(Arc::downgrade(&file));
-                        Ok(SafeFile(file))
+                        Ok(SafeFile(file,))
                     }
                 }
             }
@@ -116,10 +132,30 @@ impl SafeFile {
             //无效的字节数，则立即返回
             return Ok(Vec::with_capacity(0));
         }
-        if self.0.file.
-        let mut buf = Vec::with_capacity(len);
-        unsafe { buf.set_len(len); }
-        AsyncReadFile::new(self.0.runtime.clone(), buf, 0, self.clone(), pos, len, 0).await
+        match self.0.lock { // 如果是截断写，则读取缓冲区的数据
+            LockType::Lock(ref lock) => {
+                let data = {
+                    let lock = self.0.buff.lock();
+                    lock.0.clone()
+                };
+                let read = lock.lock().await;
+                if data.len() > 0 {
+                    Ok(Vec::from([])) // TODO .slice(pos, pos + usize)
+                }else{
+                    match self.0.file.read(pos, len).await {
+                        Ok(r) => {
+
+                            Ok(r.clone())
+                        },
+                        Err(r) => Err(r)
+                    }
+                }
+            },
+            LockType::Rw(ref lock) => {
+                let read = lock.read().await;
+                self.0.file.read(pos, len).await
+            }
+        }
     }
 
     //从指定位置开始异步写指定字节
@@ -128,8 +164,41 @@ impl SafeFile {
             //无效的字节数，则立即返回
             return Ok(0);
         }
-
-        AsyncWriteFile::new(self.0.runtime.clone(), buf, 0, self.clone(), pos, options, 0).await
+        match self.0.lock { // 如果是截断写，则先设置缓冲区的数据和版本
+            LockType::Lock(ref lock) => {        
+                {
+                    let mut lock = self.0.buff.lock();
+                    lock.0 = buf;
+                    lock.1 += 1;
+                    lock.1
+                };
+                let write = lock.lock().await;
+                let data_ver = { // 获得异步锁后先获取数据及版本
+                    let lock = self.0.buff.lock();
+                    (lock.0.clone(), lock.1)
+                };
+                if data_ver.1 == 0 { // 最新数据已经落地，则直接返回成功
+                    Ok(data_ver.0.len())
+                }else{
+                    match self.0.file.write(pos, data_ver.0, options).await {
+                        Ok(r) => {
+                            // 写成功后再次获取锁
+                            let mut lock = self.0.buff.lock();
+                            // 比较版本号， 如果相同，则将版本号设为0，表示数据已经落地
+                            if lock.1 == data_ver.1 {
+                                lock.1 = 0;
+                            }
+                            Ok(r)
+                        },
+                        Err(r) => Err(r)
+                    }
+                }
+            },
+            LockType::Rw(ref lock) => {
+                let write = lock.write().await;
+                self.0.file.write(pos, buf, options).await
+            }
+        }
     }
 }
 
