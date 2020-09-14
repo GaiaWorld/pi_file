@@ -37,7 +37,7 @@ struct Table(Mutex<XHashMap<PathBuf, Weak<InnerSafeFile>>>);
 /*
 * 安全文件
 */
-
+#[derive(Debug, Clone)]
 pub struct SafeFile(Arc<InnerSafeFile>);
 
 impl Deref for SafeFile {
@@ -71,11 +71,6 @@ impl InnerSafeFile {
         }
     }
 }
-// impl<O: Default + 'static> Clone for SafeFile<O> {
-//     fn clone(&self) -> Self {
-//         SaveFile(self.0.clone())
-//     }
-// }
 
 /*
 * 异步文件的异步方法
@@ -138,21 +133,22 @@ impl SafeFile {
                     let lock = self.0.buff.lock();
                     lock.0.clone()
                 };
-                let read = lock.lock().await;
-                if data.len() > 0 {
+                lock.lock().await;
+                if data.len() > 0 { // 如果有数据，则直接返回
                     Ok(Vec::from([])) // TODO .slice(pos, pos + usize)
                 }else{
                     match self.0.file.read(pos, len).await {
-                        Ok(r) => {
-
-                            Ok(r.clone())
+                        Ok(r) => { // 如果是全数据，则缓存读到的数据 TODO
+                            let mut lock = self.0.buff.lock();
+                            lock.0 = Arc::from(&r[..]);
+                            Ok(r)
                         },
                         Err(r) => Err(r)
                     }
                 }
             },
             LockType::Rw(ref lock) => {
-                let read = lock.read().await;
+                lock.read().await;
                 self.0.file.read(pos, len).await
             }
         }
@@ -164,7 +160,7 @@ impl SafeFile {
             //无效的字节数，则立即返回
             return Ok(0);
         }
-        match self.0.lock { // 如果是截断写，则先设置缓冲区的数据和版本
+        match self.0.lock { // 如果是截断写，则必须为全数据，忽略pos，则先设置缓冲区的数据和版本
             LockType::Lock(ref lock) => {        
                 {
                     let mut lock = self.0.buff.lock();
@@ -172,7 +168,7 @@ impl SafeFile {
                     lock.1 += 1;
                     lock.1
                 };
-                let write = lock.lock().await;
+                lock.lock().await;
                 let data_ver = { // 获得异步锁后先获取数据及版本
                     let lock = self.0.buff.lock();
                     (lock.0.clone(), lock.1)
@@ -195,7 +191,7 @@ impl SafeFile {
                 }
             },
             LockType::Rw(ref lock) => {
-                let write = lock.write().await;
+                lock.write().await;
                 self.0.file.write(pos, buf, options).await
             }
         }
@@ -253,4 +249,11 @@ pub async fn copy_file<P>(from: P, to: P) -> Result<u64>
 pub async fn remove_dir_all<P>(path: P) -> Result<()>
     where P: AsRef<Path> + Send + 'static {
     async_file::remove_dir(FILE_RUNTIME.clone(), path).await
+}
+
+/*
+* 整理OPEN_FILE_MAP, 将已经关闭的文件的弱引用条目清除 TODO 用定时器定时清理？
+*/
+pub async fn collect() {
+    
 }
