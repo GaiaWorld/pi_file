@@ -1,5 +1,5 @@
 [package]
-name = "file"
+name = "rt_file"
 version = "0.1.0"
 authors = ["vmos <vmos@fairblock.io>"]
 edition = "2018"

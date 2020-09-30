@@ -13,7 +13,7 @@ use std::collections::hash_map::{Entry};
 use async_file::{AsyncFileOptions, WriteOptions, AsyncFile};
 use r#async::rt::multi_thread::{MultiTaskPool, MultiTaskRuntime};
 use r#async::lock::{rw_lock::RwLock, mutex_lock::Mutex, spin_lock::SpinLock};
-use hash::{XHashMap, DefaultHasher};
+use hash::{XHashMap};
 
 
 lazy_static! {
@@ -35,7 +35,7 @@ lazy_static! {
 struct Table(Mutex<XHashMap<PathBuf, Weak<InnerSafeFile>>>);
 
 /*
-* 安全文件
+* 安全文件， 如果打开文件为截断写，采用异步锁，否则采用异步读写锁
 */
 #[derive(Debug, Clone)]
 pub struct SafeFile(Arc<InnerSafeFile>);
