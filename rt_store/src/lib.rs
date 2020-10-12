@@ -11,7 +11,7 @@
 //! * write时，先 往Log中写入，成功后再插入到 内存map；
 //! * remove时，往Log中写入一条仅有key的数据，成功后，再移除掉 内存map对应的项
 //!
-//!
+//! TODO K应该是可序列化可排序的约束， keys提供范围获取， entrys提供范围获取
 
 use std::collections::BTreeMap;
 use std::io::Result;
