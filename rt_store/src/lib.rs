@@ -1,4 +1,4 @@
-//! # 异步存储模块 Store< K=String, V=Vec<u8> >
+//! # 异步存储模块 Store< K=Arc<[u8]>, V=Arc<[u8]> >
 //!
 //! * 此模块的异步函数，需要用FILE_RUNTIME环境；
 //! * 此模块每个open得到table的大小，不要太大，因为内容全部进入内存；一般：5M以内
@@ -67,16 +67,15 @@ impl AsyncStore {
     }
 
     /// 同步读指定key的值
-    pub fn read(&self, key: &String) -> Option<Arc<[u8]>> {
+    pub fn read(&self, key: &[u8]) -> Option<Arc<[u8]>> {
         if let Some(value) = self.0.map.lock().get(key) {
             return Some(value.clone());
         }
-
         None
     }
 
     /// 同步获取关键字集合
-    pub fn keys(&self) -> Vec<String> {
+    pub fn keys(&self) -> Vec<Arc<[u8]>> {
         self.0.map.lock().keys().cloned().collect::<Vec<_>>()
     }
 
@@ -86,15 +85,15 @@ impl AsyncStore {
     }
 
     /// 异步写指定key的存储数据
-    pub async fn write(&self, key: String, value: Vec<u8>) -> Result<Option<Vec<u8>>> {
+    pub async fn write(&self, key: Arc<[u8]>, value: Arc<[u8]>) -> Result<Option<Vec<u8>>> {
         let id = self
             .0
             .file
-            .append(LogMethod::PlainAppend, key.as_bytes(), value.as_slice());
+            .append(LogMethod::PlainAppend, key.as_ref(), value.as_ref());
         if let Err(e) = self.0.file.delay_commit(id, 10).await {
             Err(e)
         } else {
-            if let Some(value) = self.0.map.lock().insert(key, value.into()) {
+            if let Some(value) = self.0.map.lock().insert(key, value) {
                 //更新指定key的存储数据，则返回更新前的存储数据
                 Ok(Some(value.to_vec()))
             } else {
@@ -104,8 +103,8 @@ impl AsyncStore {
     }
 
     /// 异步移除指定key的存储数据
-    pub async fn remove(&self, key: &String) -> Result<Option<Vec<u8>>> {
-        let id = self.0.file.append(LogMethod::Remove, key.as_bytes(), &[]);
+    pub async fn remove(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let id = self.0.file.append(LogMethod::Remove, key, &[]);
         if let Err(e) = self.0.file.delay_commit(id, 10).await {
             Err(e)
         } else {
@@ -121,7 +120,7 @@ impl AsyncStore {
 // 内部存储对象
 struct InnerStore {
     // 所有内容的内存数据
-    map: SpinLock<BTreeMap<String, Arc<[u8]>>>,
+    map: SpinLock<BTreeMap<Arc<[u8]>, Arc<[u8]>>>,
     // 日志文件
     file: LogFile,
 }
@@ -142,19 +141,17 @@ impl PairLoader for StoreOpen {
                 .store.0
                 .map
                 .lock()
-                .contains_key(&String::from_utf8_lossy(key.as_slice()).to_string())
+                .contains_key(key.as_slice())
     }
     // 如果is_require返回true，底层会加载；
     // 加载完成时，会回调此函数；
     //      注：如果value为None，则说明此条目是删除条目
     fn load(&mut self, _method: LogMethod, key: Vec<u8>, value: Option<Vec<u8>>) {
         if let Some(value) = value {
-            unsafe {
-                self.store.0
-                    .map
-                    .lock()
-                    .insert(String::from_utf8_unchecked(key), value.into());
-            }
+            self.store.0
+                .map
+                .lock()
+                .insert(key.into(), value.into());
         } else {
             // value为null，代表 移除的条目
             self.removed.insert(key, ());
