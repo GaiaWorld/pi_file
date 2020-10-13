@@ -13,7 +13,7 @@
 //!
 //! TODO K应该是可序列化可排序的约束， keys提供范围获取， entrys提供范围获取
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Debug, path::Path};
 use std::io::Result;
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ impl AsyncStore {
     /// * buf_len: 写缓冲区的字节数，一般4K的倍数
     /// * file_len: 单个日志文件的字节数
     ///
-    pub async fn open(path: &str, buf_len: usize, file_len: usize) -> Result<Self> {
+    pub async fn open<P: AsRef<Path> + Debug>(path: P, buf_len: usize, file_len: usize) -> Result<Self> {
         match LogFile::open(FILE_RUNTIME.clone(), path, buf_len, file_len).await {
             Err(e) => Err(e),
             Ok(file) => {
