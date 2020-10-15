@@ -13,7 +13,7 @@
 //!
 //! TODO K应该是可序列化可排序的约束， keys提供范围获取， entrys提供范围获取
 
-use std::{collections::BTreeMap, fmt::Debug, path::Path};
+use std::{collections::BTreeMap, fmt::Debug, path::{Path, PathBuf}};
 use std::io::Result;
 use std::sync::Arc;
 
@@ -38,7 +38,7 @@ impl AsyncStore {
     /// * file_len: 单个日志文件的字节数
     ///
     pub async fn open<P: AsRef<Path> + Debug>(path: P, buf_len: usize, file_len: usize) -> Result<Self> {
-        match LogFile::open(FILE_RUNTIME.clone(), path, buf_len, file_len).await {
+        match LogFile::open(FILE_RUNTIME.clone(), path, buf_len, file_len, None).await {
             Err(e) => Err(e),
             Ok(file) => {
                 //打开指定路径的日志存储成功
@@ -51,7 +51,7 @@ impl AsyncStore {
                 };
 
                 // 异步加载所有条目到内存
-                if let Err(e) = file.load(&mut store, true).await {
+                if let Err(e) = file.load(&mut store, None, true).await {
                     Err(e)
                 } else {
                     //初始化内存数据成功
@@ -90,7 +90,7 @@ impl AsyncStore {
             .0
             .file
             .append(LogMethod::PlainAppend, key.as_ref(), value.as_ref());
-        if let Err(e) = self.0.file.delay_commit(id, 10).await {
+        if let Err(e) = self.0.file.delay_commit(id, false,10).await {
             Err(e)
         } else {
             if let Some(value) = self.0.map.lock().insert(key, value) {
@@ -105,7 +105,7 @@ impl AsyncStore {
     /// 异步移除指定key的存储数据
     pub async fn remove(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let id = self.0.file.append(LogMethod::Remove, key, &[]);
-        if let Err(e) = self.0.file.delay_commit(id, 10).await {
+        if let Err(e) = self.0.file.delay_commit(id, false, 10).await {
             Err(e)
         } else {
             if let Some(value) = self.0.map.lock().remove(key) {
@@ -135,7 +135,7 @@ struct StoreOpen {
 impl PairLoader for StoreOpen {
     // 给个键，决定是否要加载；
     //    如果没标志为删除，而且没有含键，则加载该条目（新的先读，旧的后读）
-    fn is_require(&self, key: &Vec<u8>) -> bool {
+    fn is_require(&self, _log_file: Option<&PathBuf>, key: &Vec<u8>) -> bool {
         !self.removed.contains_key(key)
             && !self
                 .store.0
@@ -146,7 +146,7 @@ impl PairLoader for StoreOpen {
     // 如果is_require返回true，底层会加载；
     // 加载完成时，会回调此函数；
     //      注：如果value为None，则说明此条目是删除条目
-    fn load(&mut self, _method: LogMethod, key: Vec<u8>, value: Option<Vec<u8>>) {
+    fn load(&mut self, _log_file: Option<&PathBuf>, _method: LogMethod, key: Vec<u8>, value: Option<Vec<u8>>) {
         if let Some(value) = value {
             self.store.0
                 .map
