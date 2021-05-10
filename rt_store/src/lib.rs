@@ -59,7 +59,7 @@ impl AsyncStore {
 
                 // 异步加载所有条目到内存
                 if let Err(e) = file
-                    .load(&mut store, None, buf_len.try_into().unwrap(), true)
+                    .load(&mut store, None, buf_len as u64, true)
                     .await
                 {
                     //TODO pi_stort库升级后3参变成4参,增加了buf_len参数,此处暂用上面传来的buf_len
