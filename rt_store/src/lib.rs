@@ -2,7 +2,7 @@
 //!
 //! * 此模块的异步函数，需要用FILE_RUNTIME环境；
 //! * 此模块每个open得到table的大小，不要太大，因为内容全部进入内存；一般：5M以内
-//! 
+//!
 //！ 流程如下
 //!
 //! * open时，按日志从新到旧的顺序，全部 依次读到内存；
@@ -13,15 +13,18 @@
 //!
 //! TODO K应该是可序列化可排序的约束， keys提供范围获取， entrys提供范围获取
 
-use std::{collections::BTreeMap, fmt::Debug, path::{Path, PathBuf}};
-use std::io::Result;
 use std::sync::Arc;
+use std::{
+    collections::BTreeMap,
+    fmt::Debug,
+    path::{Path, PathBuf},
+};
+use std::{convert::TryInto, io::Result};
 
-use rt_file::{FILE_RUNTIME};
 use hash::XHashMap;
 use pi_store::log_store::log_file::{LogFile, LogMethod, PairLoader};
 use r#async::lock::spin_lock::SpinLock;
-
+use rt_file::FILE_RUNTIME;
 
 /// 线程安全的异步存储
 #[derive(Clone)]
@@ -37,21 +40,29 @@ impl AsyncStore {
     /// * buf_len: 写缓冲区的字节数，一般4K的倍数
     /// * file_len: 单个日志文件的字节数
     ///
-    pub async fn open<P: AsRef<Path> + Debug>(path: P, buf_len: usize, file_len: usize) -> Result<Self> {
+    pub async fn open<P: AsRef<Path> + Debug>(
+        path: P,
+        buf_len: usize,
+        file_len: usize,
+    ) -> Result<Self> {
         match LogFile::open(FILE_RUNTIME.clone(), path, buf_len, file_len, None).await {
             Err(e) => Err(e),
             Ok(file) => {
                 //打开指定路径的日志存储成功
-                let mut store = StoreOpen{
-                        removed: XHashMap::default(),
-                        store: AsyncStore(Arc::new(InnerStore {
+                let mut store = StoreOpen {
+                    removed: XHashMap::default(),
+                    store: AsyncStore(Arc::new(InnerStore {
                         map: SpinLock::new(BTreeMap::new()),
                         file: file.clone(),
                     }))
                 };
 
                 // 异步加载所有条目到内存
-                if let Err(e) = file.load(&mut store, None, true).await {
+                if let Err(e) = file
+                    .load(&mut store, None, buf_len as u64, true)
+                    .await
+                {
+                    //TODO pi_stort库升级后3参变成4参,增加了buf_len参数,此处暂用上面传来的buf_len
                     Err(e)
                 } else {
                     //初始化内存数据成功
@@ -90,7 +101,7 @@ impl AsyncStore {
             .0
             .file
             .append(LogMethod::PlainAppend, key.as_ref(), value.as_ref());
-        if let Err(e) = self.0.file.delay_commit(id, false,10).await {
+        if let Err(e) = self.0.file.delay_commit(id, false, 10).await {
             Err(e)
         } else {
             if let Some(value) = self.0.map.lock().insert(key, value) {
@@ -136,22 +147,20 @@ impl PairLoader for StoreOpen {
     // 给个键，决定是否要加载；
     //    如果没标志为删除，而且没有含键，则加载该条目（新的先读，旧的后读）
     fn is_require(&self, _log_file: Option<&PathBuf>, key: &Vec<u8>) -> bool {
-        !self.removed.contains_key(key)
-            && !self
-                .store.0
-                .map
-                .lock()
-                .contains_key(key.as_slice())
+        !self.removed.contains_key(key) && !self.store.0.map.lock().contains_key(key.as_slice())
     }
     // 如果is_require返回true，底层会加载；
     // 加载完成时，会回调此函数；
     //      注：如果value为None，则说明此条目是删除条目
-    fn load(&mut self, _log_file: Option<&PathBuf>, _method: LogMethod, key: Vec<u8>, value: Option<Vec<u8>>) {
+    fn load(
+        &mut self,
+        _log_file: Option<&PathBuf>,
+        _method: LogMethod,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+    ) {
         if let Some(value) = value {
-            self.store.0
-                .map
-                .lock()
-                .insert(key.into(), value.into());
+            self.store.0.map.lock().insert(key.into(), value.into());
         } else {
             // value为null，代表 移除的条目
             self.removed.insert(key, ());
