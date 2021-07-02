@@ -11,7 +11,7 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::io::{ Result};
 use std::collections::hash_map::{Entry};
 use async_file::{AsyncFileOptions, WriteOptions, AsyncFile};
-use r#async::rt::multi_thread::{MultiTaskPool, MultiTaskRuntime};
+use r#async::rt::multi_thread::{MultiTaskRuntimeBuilder, StealableTaskPool, MultiTaskRuntime};
 use r#async::lock::{rw_lock::RwLock, mutex_lock::Mutex, spin_lock::SpinLock};
 use hash::{XHashMap};
 
@@ -24,9 +24,16 @@ lazy_static! {
             Ok(r) => usize::from_str_radix(r.as_str(), 10).unwrap(),
             _ => num_cpus::get()
         };
+        let pool = StealableTaskPool::with(count, count);
         // 线程池：每个线程1M的栈空间，10ms 休眠，10毫秒的定时器间隔
-        let pool = MultiTaskPool::new("File-Runtime".to_string(), count, 1024 * 1024, 10, Some(10));
-        pool.startup(true)
+        let builder = MultiTaskRuntimeBuilder::new(pool)
+        .thread_prefix("File-Runtime")
+        .thread_stack_size(1024 * 1024)
+        .init_worker_size(count)
+        .set_worker_limit(count, count)
+        .set_timeout(10)
+        .set_timer_interval(10);
+        builder.build()
     };
     /// 打开文件的全局表
     static ref OPEN_FILE_MAP: Table = Table(Mutex::new(XHashMap::default()));
