@@ -5,6 +5,9 @@
 
 ### Features
 
+* 更新 notify 依赖版本
+ 578eb95
+
 * init
  ba895da
 
