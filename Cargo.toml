@@ -10,5 +10,5 @@ keywords = ["pi", "file"]
 
 [dependencies]
 npnc = "*"
-notify = "*"
+notify = "4.0.17"
 pi_atom = "0.1.0"
