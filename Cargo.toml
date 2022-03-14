@@ -9,6 +9,6 @@ license = "MIT OR Apache-2.0"
 keywords = ["pi", "file"]
 
 [dependencies]
-npnc = "*"
-notify = "4.0.17"
-pi_atom = "0.1.0"
+npnc = "0.2"
+notify = "4.0"
+pi_atom = "0.1"
