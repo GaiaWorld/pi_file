@@ -11,4 +11,4 @@ keywords = ["pi", "file"]
 [dependencies]
 npnc = "0.2"
 notify = "4.0"
-pi_atom = "0.1"
+pi_atom = "0.2"
