@@ -1,10 +1,10 @@
 #![feature(asm)]
 #![feature(libc)]
-#![feature(drain_filter)]
+// #![feature(drain_filter)]
 #![feature(rustc_private)]
 #![feature(type_ascription)]
 #![feature(slice_internals)]
-#![feature(integer_atomics)]
+// #![feature(integer_atomics)]
 
 extern crate npnc;
 extern crate notify;
