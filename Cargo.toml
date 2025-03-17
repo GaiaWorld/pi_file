@@ -1,6 +1,6 @@
 [package]
 name = "pi_file"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["vmos <vmos@fairblock.io>"]
 edition = "2018"
 description = "一个文件监听器"
